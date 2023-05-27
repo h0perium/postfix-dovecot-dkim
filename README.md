@@ -1,91 +1,203 @@
-# Postfix SMTP only with relay support
+### Fast and simple run :
 
-Postfix SMTP only Docker image with SMTP relay support.
+```sh
+docker run -d  --name mailserver \
+       --restart always \
+       -p 25:25 -p 993:993 -p 995:995 -p 587:587 -p 143:143 -p 110:110  \
+       -e MTP_HOST=example.com \
+       -e INIT_EMAIL=info@example.com \
+       -e INIT_EMAIL_PASS=qwerty \
+       -e MTP_DESTINATION='6a6a6586e71d, localhost.localdomain, localhost' \
+       -v mailserver-storage:/var/mail \
+       h0perium/postfix-dovecot-dkim
+```
 
- - CentOS: **7**
- - Postfix: **2.10.1**
- - Expose: **25**
-
-
-## Supported tags and respective Dockerfile links
-
-  - `:latest` [*Dockerfile*](https://github.com/eea/eea.docker.postfix/blob/master/Dockerfile) - CentOS: **7** Postfix: **2.10.1**
-
-### Stable and immutable tags
-
-  - `:2.10-3.7` [*Dockerfile*](https://github.com/eea/eea.docker.postfix/blob/2.10-3.6/Dockerfile) - Postfix: **2.10** Release: *3.7*
-
-
-See [older versions](https://github.com/eea/eea.docker.postfix/releases)
+** you just need to replace the MTP_HOST  with your hostname and an initial email address and its password in INIT_EMAIL and INIT_EMAIL_PASS evn variables
+, you can also connect this container to your own external docker network with your apache webserver and send emails without any username and password
 
 
-## Base docker image
+## DKIM  And Other Configs
 
- - [hub.docker.com](https://hub.docker.com/r/eeacms/postfix)
+add dkim configuration for your domain so your email not get spammed. i have prepared an script inside the cotainer for you to generate all dkim configs and creating users or adding domains to your mailserver:
 
-
-## Source code
-
-  - [github.com](http://github.com/eea/eea.docker.postfix)
-
-
-## Usage
-
-Start postfix (to send emails using postfix within container)
-
-    $ docker run --rm --name=postfix \
-                 -e  MTP_HOST=foo.com \
-             eeacms/postfix
-
-or start postfix (to send emails by using a remote email server)
-
-    $ docker run --rm --name=postfix \
-                 -e MTP_HOST=foo.com \
-                 -e MTP_RELAY=smtp.gmail.com \
-                 -e MTP_USER=foo \
-                 -e MTP_PASS=secret \
-             eeacms/postfix
-
-Start sending emails:
-
-    $ docker run -it --rm --link=postfix busybox sh
-      $ telnet postfix 25
-      HELO foo.com
-      MAIL FROM: bar@foo.com
-      RCPT TO: foo@bar.com
-      DATA
-      subject: Test
-      Testing 1, 2, 3
-      .
-      quit
+```sh
+docker exec -it mailserver bash mailconfig.sh dkim example.com
+```
+after running this command the script will give you 3 dns records(spf,dkim,dmarc) which you need to set them in your domain dns zone file
 
 
-## Supported environment variables
+to add a new email address:
+```sh
+docker exec -it mailserver bash mailconfig.sh adduser  admin@example.com
+```
 
-* `MTP_HOST` The `myhostname` parameter specifies the internet hostname of this mail system
-* `MTP_DESTINATION` The `mydestination` parameter specifies the list of domains that this machine considers itself the final destination for.
-* `MTP_BANNER` The `smtpd_banner` parameter specifies the text that follows the 220 code in the SMTP server's greeting banner.
-* `MTP_RELAY` The `relayhost` parameter specifies the default host to send mail to when no entry is matched in the optional transport(5) table.
-* `MTP_RELAY_DOMAINS` The `relay_domains` parameter restricts what destinations this system will relay mail to.
-* `MTP_PORT` The `relayhost` port.
-* `MTP_USER` The user used to connect to the `relayhost`.
-* `MTP_PASS` The password used to connect to the `relayhost`.
-* `MTP_INTERFACES` The `inet_interfaces` parameter specifies the network interface addresses that this mail system receives mail on.
-* `MTP_PROTOCOLS` The `inet_protocols` parameter specifies the network interface protocol. Can be set to `all`, `ipv4`,`ipv6` or `ipv4,ipv6`. The default value is `all`.
-* `MTP_MS_SIZE_LIMIT` If set, will configure email size limit.
+here there is help for more command that you can use :
+```sh
+==================================================
+Examples : 
 
-## Copyright and license
+  bash mailconfig.sh  dkim  example.com
 
-The Initial Owner of the Original Code is European Environment Agency (EEA).
-All Rights Reserved.
+  bash mailconfig.sh  adduser  info@example.com  passwort
 
-The Original Code is free software;
-you can redistribute it and/or modify it under the terms of the GNU
-General Public License as published by the Free Software Foundation;
-either version 2 of the License, or (at your option) any later
-version.
+  bash mailconfig.sh  domainadd example.com
+
+  bash mailconfig.sh  listusers
+
+  bash mailconfig.sh  listdomains
+
+  bash mailconfig.sh  deluser  info@example.com
+
+  bash mailconfig.sh  deldomain  example.com
+==================================================
+```
 
 
-## Funding
+## SSL Certificates
 
-[European Environment Agency (EU)](http://eea.europa.eu)
+by default if no certificates set , it will use self-signed certificates . but you can replace and set your own verified certificates instead. just add the following lines and replace the path with your own certificate files
+```sh
+-v /path/to/your/publickey.crt:/etc/ssl/certs/ssl-cert-snakeoil.pem:ro \
+-v /path/to/your/privatekey.key:/etc/ssl/private/ssl-cert-snakeoil.key:ro
+```
+
+## Roundcube Panel
+
+if you need a graphical user interface to send and receive emails , we have also prepared a roundcube image to connect it to postfix-dovecot service. roundcube needs database which we use mysql here so you can run both services in a docker-compose file.
+
+docker-compose.yml:
+```sh
+version: '3'
+
+services:
+  db:
+    image: mysql:5.7
+    restart: always
+    environment:
+      MYSQL_RANDOM_ROOT_PASSWORD: 1
+      MYSQL_DATABASE: admin
+      MYSQL_USER: admin
+      MYSQL_PASSWORD: admin
+
+  mailserver:
+    image: h0perium/postfix-dovecot-dkim
+    restart: always
+    ports:
+      - 25:25
+      - 587:587
+      - 993:993
+      - 995:995
+      - 143:143
+      - 110:110
+    volumes:
+      - mailserver-storage:/var/mail
+
+    environment:
+      MTP_HOST: example.com
+      INIT_EMAIL: info@example.com
+      INIT_EMAIL_PASS: qwerty
+      MTP_DESTINATION: '6a6a6586e71d, localhost.localdomain, localhost'
+
+
+
+  roundcube:
+    depends_on:
+      - db
+    image: h0perium/roundcube
+  
+
+    environment:
+      ROUNDCUBEMAIL_DEFAULT_HOST: "mailserver"
+      ROUNDCUBEMAIL_SMTP_SERVER:  "mailserver"
+      ROUNDCUBEMAIL_SMTP_PORT: 25
+      ROUNDCUBEMAIL_DB_TYPE: mysql
+      ROUNDCUBEMAIL_DB_HOST: db
+      ROUNDCUBEMAIL_DB_USER: admin
+      ROUNDCUBEMAIL_DB_PASSWORD: admin
+      ROUNDCUBEMAIL_DB_NAME: admin
+
+    ports:
+      - 6565:80
+    restart: always
+
+volumes:
+   mailserver-storage:
+```
+you just need to replace the MTP_HOST  with your hostname and an initial email address and its password in INIT_EMAIL and INIT_EMAIL_PASS evn variables.
+now you can access roundcube on port 6565 or any port you asigned in docker-compose file
+and run it with command:
+
+```sh
+docker-compose up -d
+```
+it takes couple of minutes till roundcube get fully loaded.
+
+you can add this microservice to your exisintg docker network like this:
+```sh
+version: '3'
+
+services:
+  db:
+    image: mysql:5.7
+    restart: always
+    networks:
+      - mynetwork
+
+    environment:
+      MYSQL_RANDOM_ROOT_PASSWORD: 1
+      MYSQL_DATABASE: admin
+      MYSQL_USER: admin
+      MYSQL_PASSWORD: admin
+
+  mailserver:
+    image: h0perium/postfix-dovecot-dkim
+    restart: always
+    ports:
+      - 25:25
+      - 587:587
+      - 993:993
+      - 995:995
+      - 143:143
+      - 110:110
+    volumes:
+      - mailserver-storage:/var/mail
+    networks:
+      - mynetwork
+
+    environment:
+      MTP_HOST: example.com
+      INIT_EMAIL: info@example.com
+      INIT_EMAIL_PASS: qwerty
+      MTP_DESTINATION: '6a6a6586e71d, localhost.localdomain, localhost'
+
+
+
+  roundcube:
+    depends_on:
+      - db
+    image: h0perium/roundcube
+    networks:
+      - mynetwork
+    environment:
+      ROUNDCUBEMAIL_DEFAULT_HOST: "mailserver"
+      ROUNDCUBEMAIL_SMTP_SERVER:  "mailserver"
+      ROUNDCUBEMAIL_SMTP_PORT: 25
+      ROUNDCUBEMAIL_DB_TYPE: mysql
+      ROUNDCUBEMAIL_DB_HOST: db
+      ROUNDCUBEMAIL_DB_USER: admin
+      ROUNDCUBEMAIL_DB_PASSWORD: admin
+      ROUNDCUBEMAIL_DB_NAME: admin
+
+    ports:
+      - 6565:80
+    restart: always
+
+networks:
+  mynetwork:
+    external: true
+
+volumes:
+   mailserver-storage:
+
+```
+
